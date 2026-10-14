@@ -33,7 +33,7 @@ export async function submitVendorPaymentAction(formData: FormData) {
 
   const { data: settlement, error: settlementError } = await supabase
     .from("settlements")
-    .select("id, vendor_id, status, platform_fee, adjustment_total, amount_paid")
+    .select("id, vendor_id, month, status, platform_fee, adjustment_total, amount_paid")
     .eq("id", settlementId)
     .eq("vendor_id", profile.vendor_id)
     .single();
@@ -66,7 +66,7 @@ export async function submitVendorPaymentAction(formData: FormData) {
       await sendPlatformPaymentSubmissionAlertEmail({
         to: settings.support_email,
         vendorName: vendor?.name ?? "Vendor",
-        monthLabel: new Date().toLocaleDateString("en-PK", { month: "long", year: "numeric" }),
+        monthLabel: new Date(`${settlement.month}T00:00:00.000Z`).toLocaleDateString("en-PK", { month: "long", year: "numeric", timeZone: "UTC" }),
         amount,
         method,
         reference,
