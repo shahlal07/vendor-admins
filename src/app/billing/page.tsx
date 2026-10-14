@@ -1,59 +1,8 @@
-"use server";
-
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { submitVendorPaymentAction } from "./actions";
 import { createClient } from "@/lib/supabase/server";
 import { formatPKR } from "@/lib/format";
-
-export async function submitVendorPaymentAction(formData: FormData) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, role, vendor_id")
-    .eq("id", user.id)
-    .single();
-  if (profileError || !profile || !profile.vendor_id || !["admin", "staff"].includes(profile.role)) {
-    throw new Error("This account is not linked to a vendor.");
-  }
-
-  const settlementId = String(formData.get("settlementId") ?? "");
-  const amount = Number(formData.get("amount"));
-  const method = String(formData.get("method") ?? "");
-  const reference = String(formData.get("reference") ?? "").trim().slice(0, 160);
-  const notes = String(formData.get("notes") ?? "").trim().slice(0, 1000);
-  if (!settlementId || !Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid payment amount.");
-  if (!["bank_transfer", "cash", "cheque", "other"].includes(method)) throw new Error("Choose a valid payment method.");
-  if (!reference) throw new Error("A transaction reference is required.");
-
-  const { data: settlement, error: settlementError } = await supabase
-    .from("settlements")
-    .select("id, vendor_id, status, platform_fee, amount_paid")
-    .eq("id", settlementId)
-    .eq("vendor_id", profile.vendor_id)
-    .single();
-  if (settlementError || !settlement) throw new Error("Invoice not found for this vendor.");
-  if (!["pending", "partially_paid"].includes(settlement.status)) throw new Error("This invoice is not accepting payment submissions.");
-  const outstanding = Math.max(0, Number(settlement.platform_fee) - Number(settlement.amount_paid ?? 0));
-  if (amount > outstanding) throw new Error(`Amount exceeds the remaining balance of Rs ${Math.round(outstanding).toLocaleString("en-PK")}.`);
-
-  const { error } = await supabase.from("vendor_payment_submissions").insert({
-    vendor_id: profile.vendor_id,
-    settlement_id: settlement.id,
-    submitted_by: user.id,
-    amount,
-    method,
-    reference,
-    notes,
-    status: "submitted",
-  });
-  if (error) throw new Error(error.message);
-
-  revalidatePath("/billing");
-  redirect("/billing?submitted=1");
-}
+import { PaymentSubmissionForm } from "./PaymentSubmissionForm";
 
 function monthLabel(month: string) {
   return new Date(`${month}T00:00:00.000Z`).toLocaleDateString("en-PK", {
@@ -151,26 +100,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
                   <p>Paid: <strong>{formatPKR(Number(s.amount_paid ?? 0))}</strong></p>
                   <p>Balance: <strong>{formatPKR(balance)}</strong></p>
                 </div>
-                {payable && (
-                  <form action={submitVendorPaymentAction} className="mt-4 grid gap-3 border-t border-[var(--border-subtle)] pt-4 sm:grid-cols-2">
-                    <input type="hidden" name="settlementId" value={s.id} />
-                    <label className="text-xs font-medium">Amount (PKR)
-                      <input required name="amount" type="number" min="1" max={balance} step="0.01" defaultValue={balance} className="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-transparent px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-medium">Payment method
-                      <select required name="method" defaultValue="bank_transfer" className="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-transparent px-3 py-2 text-sm">
-                        <option value="bank_transfer">Bank transfer</option><option value="cash">Cash</option><option value="cheque">Cheque</option><option value="other">Other</option>
-                      </select>
-                    </label>
-                    <label className="text-xs font-medium sm:col-span-2">Transaction reference
-                      <input required name="reference" maxLength={160} placeholder="Bank / Easypaisa / JazzCash reference number" className="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-transparent px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-medium sm:col-span-2">Notes (optional)
-                      <textarea name="notes" maxLength={1000} rows={2} placeholder="Additional details for the finance team" className="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-transparent px-3 py-2 text-sm" />
-                    </label>
-                    <button type="submit" className="rounded-xl bg-[var(--mango-orange)] px-4 py-2.5 text-sm font-bold text-white sm:col-span-2">Submit payment details for verification</button>
-                  </form>
-                )}
+                {payable && <PaymentSubmissionForm settlementId={s.id} balance={balance} />}
               </article>
             );
           })}
