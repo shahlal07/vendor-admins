@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { sendPlatformPaymentSubmissionAlertEmail } from "@/lib/email";
 
 export async function submitVendorPaymentAction(formData: FormData) {
   const supabase = await createClient();
@@ -52,6 +54,29 @@ export async function submitVendorPaymentAction(formData: FormData) {
     status: "submitted",
   });
   if (error) throw new Error(error.message);
+
+  // Notify the platform's configured support/superadmin mailbox after the submission is persisted.
+  try {
+    const adminClient = createAdminClient();
+    const [{ data: settings }, { data: vendor }] = await Promise.all([
+      adminClient.from("platform_settings").select("support_email").eq("id", true).maybeSingle(),
+      adminClient.from("vendors").select("name").eq("id", profile.vendor_id).maybeSingle(),
+    ]);
+    if (settings?.support_email) {
+      await sendPlatformPaymentSubmissionAlertEmail({
+        to: settings.support_email,
+        vendorName: vendor?.name ?? "Vendor",
+        monthLabel: new Date().toLocaleDateString("en-PK", { month: "long", year: "numeric" }),
+        amount,
+        method,
+        reference,
+      });
+    } else {
+      console.warn("[email] Payment submission saved, but platform_settings.support_email is not configured.");
+    }
+  } catch (notifyError) {
+    console.error("[email] Failed to notify platform about vendor payment submission:", notifyError);
+  }
 
   revalidatePath("/billing");
   redirect("/billing?submitted=1");
