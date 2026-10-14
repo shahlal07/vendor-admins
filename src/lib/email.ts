@@ -184,6 +184,24 @@ export async function sendAnnouncementEmail(params: {
   await sendMail(params.to, params.title, html, params.businessName);
 }
 
+export async function sendPaymentStatusUpdateEmail(params: {
+  to: string;
+  orderNumber: string;
+  paymentStatus: "failed" | "refunded";
+  businessName: string;
+}): Promise<void> {
+  const copy = params.paymentStatus === "refunded"
+    ? { title: "Your payment has been refunded", message: "The payment for this order has been marked as refunded. Please allow time for your payment provider to reflect the refund." }
+    : { title: "There was a problem with your payment", message: "The payment for this order was marked as failed. Please contact the store if you need help completing payment." };
+  const safe = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const html = wrapEmail(`
+    <h2 style="margin-top:0;">${copy.title}</h2>
+    <p>${copy.message}</p>
+    <p><strong>Order:</strong> ${safe(params.orderNumber)}<br/><strong>Store:</strong> ${safe(params.businessName)}</p>
+  `, params.businessName);
+  await sendMail(params.to, `${copy.title} — ${params.orderNumber}`, html, params.businessName);
+}
+
 export async function sendPaymentApprovedEmail(params: {
   to: string;
   orderNumber: string;
