@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getAdminUser } from '@/lib/dal';
 import { logAdminAction } from '@/lib/audit-log';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { sendVendorSupportMessageAlertEmail } from '@/lib/email';
 import { groqComplete, type ChatMessage } from '@/lib/groq';
 
 export type SentMessage = { id: string; senderType: string; body: string; createdAt: string };
@@ -33,6 +35,20 @@ async function fetchLatestOwnMessage(supabase: Awaited<ReturnType<typeof createC
   return { id: data.id, senderType: data.sender_type, body: data.body, createdAt: data.created_at };
 }
 
+async function notifyPlatformSupport(vendorName: string, message: string) {
+  try {
+    const adminClient = createAdminClient();
+    const { data: settings } = await adminClient.from('platform_settings').select('support_email').eq('id', true).maybeSingle();
+    if (settings?.support_email) {
+      await sendVendorSupportMessageAlertEmail({ to: settings.support_email, vendorName, message });
+    } else {
+      console.warn('[email] Vendor support message saved, but platform_settings.support_email is not configured.');
+    }
+  } catch (error) {
+    console.error('[email] Failed to notify platform about vendor support message:', error);
+  }
+}
+
 export async function startSupportConversation(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const admin = await getAdminUser();
   const parsed = BodySchema.safeParse(formData.get('body'));
@@ -47,6 +63,8 @@ export async function startSupportConversation(_prev: ActionState, formData: For
 
   const conversationId = data as string;
   const message = await fetchLatestOwnMessage(supabase, conversationId);
+
+  await notifyPlatformSupport(admin.vendor_name, parsed.data);
 
   await logAdminAction(admin, 'start_support_conversation', 'support_conversation', conversationId);
   revalidatePath('/admin/support');
@@ -74,6 +92,8 @@ export async function sendSupportMessage(_prev: ActionState, formData: FormData)
   if (error) return { error: `Couldn't send your message: ${error.message}` };
 
   const message = await fetchLatestOwnMessage(supabase, parsed.data.conversationId);
+
+  await notifyPlatformSupport(admin.vendor_name, parsed.data.body);
 
   await logAdminAction(admin, 'send_support_message', 'support_conversation', parsed.data.conversationId);
   revalidatePath('/admin/support');
