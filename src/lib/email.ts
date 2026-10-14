@@ -108,6 +108,21 @@ export async function sendOrderTrackingUpdateEmail(params: {
   await sendMail(params.to, `Delivery details updated — ${params.orderNumber}`, html, params.businessName);
 }
 
+export async function sendVendorSupportMessageAlertEmail(params: {
+  to: string;
+  vendorName: string;
+  message: string;
+}): Promise<void> {
+  const safe = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const html = wrapEmail(`
+    <h2 style="margin-top:0;">New message from a Nashemann vendor</h2>
+    <p><strong>Vendor:</strong> ${safe(params.vendorName)}</p>
+    <blockquote style="margin:16px 0;padding:12px 16px;border-left:3px solid #FF6B00;background:#f9fafb;white-space:pre-wrap;">${safe(params.message)}</blockquote>
+    <a href="https://superadmin.nashemann.store/support" style="display:inline-block;margin-top:12px;background:#FF6B00;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">Open support inbox</a>
+  `, 'Nashemann');
+  await sendMail(params.to, `New support message — ${params.vendorName}`, html, 'Nashemann');
+}
+
 export async function sendPlatformPaymentSubmissionAlertEmail(params: {
   to: string;
   vendorName: string;
