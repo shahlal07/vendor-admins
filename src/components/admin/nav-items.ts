@@ -10,6 +10,7 @@ export type NavItem = {
 // nothing in the nav is ever a dead link.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Main' },
+  { label: 'Billing & invoices', href: '/billing', section: 'Main' },
   { label: 'Products', href: '/admin/products', section: 'Main' },
   { label: 'Orders', href: '/admin/orders', section: 'Main' },
   { label: 'Customers', href: '/admin/customers', section: 'Main' },
