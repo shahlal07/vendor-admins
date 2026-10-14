@@ -28,7 +28,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
 
   const [{ data: vendor }, { data: settlements, error: settlementError }, { data: submissions }] = await Promise.all([
     supabase.from("vendors").select("id, name, status, plan").eq("id", profile.vendor_id).single(),
-    supabase.from("settlements").select("id, month, orders_count, gross_revenue, platform_fee, amount_paid, status, due_date").eq("vendor_id", profile.vendor_id).order("month", { ascending: false }),
+    supabase.from("settlements").select("id, month, orders_count, gross_revenue, platform_fee, adjustment_total, amount_paid, status, due_date").eq("vendor_id", profile.vendor_id).order("month", { ascending: false }),
     supabase.from("vendor_payment_submissions").select("id, settlement_id, amount, method, reference, status, review_note, created_at").eq("vendor_id", profile.vendor_id).order("created_at", { ascending: false }),
   ]);
   if (settlementError || !vendor) redirect("/login?error=vendor_unavailable");
@@ -37,7 +37,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
   const submissionRows = submissions ?? [];
   const outstandingTotal = invoiceRows
     .filter((s) => ["pending", "partially_paid"].includes(s.status))
-    .reduce((sum, s) => sum + Math.max(0, Number(s.platform_fee) - Number(s.amount_paid ?? 0)), 0);
+    .reduce((sum, s) => sum + Math.max(0, Number(s.platform_fee) + Number(s.adjustment_total ?? 0) - Number(s.amount_paid ?? 0)), 0);
 
   return (
     <main className="mx-auto max-w-5xl space-y-7 px-4 py-8 text-[var(--text)]">
@@ -82,7 +82,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
         <p className="mb-4 mt-1 text-sm text-[var(--text-light)]">Use your invoice reference when making a transfer. Balances update only after Superadmin confirms a payment.</p>
         <div className="space-y-3">
           {invoiceRows.map((s) => {
-            const balance = Math.max(0, Number(s.platform_fee) - Number(s.amount_paid ?? 0));
+            const balance = Math.max(0, Number(s.platform_fee) + Number(s.adjustment_total ?? 0) - Number(s.amount_paid ?? 0));
             const payable = ["pending", "partially_paid"].includes(s.status) && balance > 0;
             return (
               <article key={s.id} className="rounded-xl border border-[var(--border-subtle)] p-4">
@@ -95,8 +95,9 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
                   </div>
                   <span className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs font-semibold capitalize">{s.status.replace("_", " ")}</span>
                 </div>
-                <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-                  <p>Fee: <strong>{formatPKR(Number(s.platform_fee))}</strong></p>
+                <div className="mt-4 grid gap-2 text-sm sm:grid-cols-4">
+                  <p>Plan fee: <strong>{formatPKR(Number(s.platform_fee))}</strong></p>
+                  <p>Adjustments: <strong>{formatPKR(Number(s.adjustment_total ?? 0))}</strong></p>
                   <p>Paid: <strong>{formatPKR(Number(s.amount_paid ?? 0))}</strong></p>
                   <p>Balance: <strong>{formatPKR(balance)}</strong></p>
                 </div>
