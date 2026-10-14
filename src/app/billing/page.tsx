@@ -91,6 +91,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
                     <h3 className="font-semibold">{monthLabel(s.month)}</h3>
                     <p className="mt-1 break-all text-xs text-[var(--text-light)]">Invoice: {s.id}</p>
                     <p className="mt-1 text-xs text-[var(--text-light)]">Due {s.due_date ?? "date not set"} · {s.orders_count} orders</p>
+                    <a href={`/billing/${s.id}`} className="mt-2 inline-block text-xs font-semibold text-[var(--mango-orange)] underline">View / print invoice</a>
                   </div>
                   <span className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs font-semibold capitalize">{s.status.replace("_", " ")}</span>
                 </div>
