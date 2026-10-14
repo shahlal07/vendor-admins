@@ -22,14 +22,15 @@ export type ActionState = { error?: string; success?: boolean } | undefined;
 // user.email guard in checkout/actions.ts.
 async function getCustomerEmail(
   supabase: SupabaseClient,
-  customerId: string
+  customerId: string,
+  fallbackEmail?: string | null
 ): Promise<string | null> {
   const { data } = await supabase
     .from('profiles')
     .select('email')
     .eq('id', customerId)
     .maybeSingle();
-  return data?.email ?? null;
+  return data?.email ?? fallbackEmail ?? null;
 }
 
 const StatusSchema = z.enum(ORDER_STATUSES);
@@ -52,11 +53,16 @@ export async function updateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
+  const { data: previousOrder } = await supabase
+    .from('orders')
+    .select('status')
+    .eq('id', parsed.data.orderId)
+    .maybeSingle();
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
     .eq('id', parsed.data.orderId)
-    .select('order_number, customer_id')
+    .select('order_number, customer_id, delivery')
     .single();
 
   if (error) return { error: `Failed to update status: ${error.message}` };
@@ -65,8 +71,8 @@ export async function updateOrderStatus(
     status: parsed.data.status,
   });
 
-  const email = await getCustomerEmail(supabase, updated.customer_id);
-  if (email) {
+  const email = await getCustomerEmail(supabase, updated.customer_id, (updated.delivery as { email?: string } | null)?.email);
+  if (email && previousOrder && previousOrder.status !== parsed.data.status) {
     await sendOrderStatusUpdateEmail({
       to: email,
       orderNumber: updated.order_number,
@@ -106,11 +112,16 @@ export async function bulkUpdateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
+  const { data: previousOrders } = await supabase
+    .from('orders')
+    .select('id, status')
+    .in('id', parsed.data.orderIds);
+  const previousStatusById = new Map((previousOrders ?? []).map((o) => [o.id, o.status]));
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
     .in('id', parsed.data.orderIds)
-    .select('order_number, customer_id');
+    .select('id, order_number, customer_id, delivery');
 
   if (error) return { error: `Failed to update orders: ${error.message}` };
 
@@ -131,7 +142,8 @@ export async function bulkUpdateOrderStatus(
 
   await Promise.all(
     (updated ?? []).map((o) => {
-      const email = emailByCustomerId.get(o.customer_id);
+      if (previousStatusById.get(o.id) === parsed.data.status) return Promise.resolve();
+      const email = emailByCustomerId.get(o.customer_id) ?? (o.delivery as { email?: string } | null)?.email;
       if (!email) return Promise.resolve();
       return sendOrderStatusUpdateEmail({
         to: email,
@@ -179,7 +191,7 @@ export async function updateOrderTracking(
   const d = parsed.data;
   const { data: previousOrder } = await supabase
     .from('orders')
-    .select('order_number, customer_id, tracking_number, courier_name, payment_status')
+    .select('order_number, customer_id, delivery, tracking_number, courier_name, payment_status')
     .eq('id', d.orderId)
     .maybeSingle();
 
@@ -205,7 +217,7 @@ export async function updateOrderTracking(
     previousOrder.tracking_number !== d.trackingNumber ||
     previousOrder.courier_name !== d.courierName
   )) {
-    const email = await getCustomerEmail(supabase, previousOrder.customer_id);
+    const email = await getCustomerEmail(supabase, previousOrder.customer_id, (previousOrder.delivery as { email?: string } | null)?.email);
     if (email) {
       await sendOrderTrackingUpdateEmail({
         to: email,
@@ -274,7 +286,7 @@ export async function verifyPayment(
 
   const { data: order, error: readError } = await supabase
     .from('orders')
-    .select('status, order_number, total, customer_id')
+    .select('status, order_number, total, customer_id, delivery')
     .eq('id', d.orderId)
     .maybeSingle();
   if (readError || !order) return { error: 'Order not found.' };
@@ -303,7 +315,7 @@ export async function verifyPayment(
     d.approve ? undefined : { reason: d.rejectionReason }
   );
 
-  const email = await getCustomerEmail(supabase, order.customer_id);
+  const email = await getCustomerEmail(supabase, order.customer_id, (order.delivery as { email?: string } | null)?.email);
   if (email) {
     if (d.approve) {
       await sendPaymentApprovedEmail({ to: email, orderNumber: order.order_number, total: order.total, businessName: admin.vendor_name });
