@@ -12,6 +12,7 @@ import {
   sendPaymentApprovedEmail,
   sendPaymentRejectedEmail,
   sendOrderTrackingUpdateEmail,
+  sendPaymentStatusUpdateEmail,
 } from '@/lib/email';
 
 export type ActionState = { error?: string; success?: boolean } | undefined;
@@ -178,7 +179,7 @@ export async function updateOrderTracking(
   const d = parsed.data;
   const { data: previousOrder } = await supabase
     .from('orders')
-    .select('order_number, customer_id, tracking_number, courier_name')
+    .select('order_number, customer_id, tracking_number, courier_name, payment_status')
     .eq('id', d.orderId)
     .maybeSingle();
 
@@ -211,6 +212,19 @@ export async function updateOrderTracking(
         orderNumber: previousOrder.order_number,
         trackingNumber: d.trackingNumber,
         courierName: d.courierName,
+        businessName: admin.vendor_name,
+      });
+    }
+  }
+
+  if (previousOrder && previousOrder.payment_status !== d.paymentStatus &&
+      (d.paymentStatus === 'refunded' || d.paymentStatus === 'failed')) {
+    const email = await getCustomerEmail(supabase, previousOrder.customer_id);
+    if (email) {
+      await sendPaymentStatusUpdateEmail({
+        to: email,
+        orderNumber: previousOrder.order_number,
+        paymentStatus: d.paymentStatus,
         businessName: admin.vendor_name,
       });
     }
