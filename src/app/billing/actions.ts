@@ -31,13 +31,13 @@ export async function submitVendorPaymentAction(formData: FormData) {
 
   const { data: settlement, error: settlementError } = await supabase
     .from("settlements")
-    .select("id, vendor_id, status, platform_fee, amount_paid")
+    .select("id, vendor_id, status, platform_fee, adjustment_total, amount_paid")
     .eq("id", settlementId)
     .eq("vendor_id", profile.vendor_id)
     .single();
   if (settlementError || !settlement) throw new Error("Invoice not found for this vendor.");
   if (!["pending", "partially_paid"].includes(settlement.status)) throw new Error("This invoice is not accepting payment submissions.");
-  const outstanding = Math.max(0, Number(settlement.platform_fee) - Number(settlement.amount_paid ?? 0));
+  const outstanding = Math.max(0, Number(settlement.platform_fee) + Number(settlement.adjustment_total ?? 0) - Number(settlement.amount_paid ?? 0));
   if (amount > outstanding) throw new Error(`Amount exceeds the remaining balance of Rs ${Math.round(outstanding).toLocaleString("en-PK")}.`);
 
   const { error } = await supabase.from("vendor_payment_submissions").insert({
