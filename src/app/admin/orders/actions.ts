@@ -11,6 +11,7 @@ import {
   sendOrderStatusUpdateEmail,
   sendPaymentApprovedEmail,
   sendPaymentRejectedEmail,
+  sendOrderTrackingUpdateEmail,
 } from '@/lib/email';
 
 export type ActionState = { error?: string; success?: boolean } | undefined;
@@ -175,6 +176,12 @@ export async function updateOrderTracking(
 
   const supabase = await createClient();
   const d = parsed.data;
+  const { data: previousOrder } = await supabase
+    .from('orders')
+    .select('order_number, customer_id, tracking_number, courier_name')
+    .eq('id', d.orderId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from('orders')
     .update({
@@ -192,6 +199,22 @@ export async function updateOrderTracking(
     courierName: d.courierName,
     paymentStatus: d.paymentStatus,
   });
+
+  if (previousOrder && (
+    previousOrder.tracking_number !== d.trackingNumber ||
+    previousOrder.courier_name !== d.courierName
+  )) {
+    const email = await getCustomerEmail(supabase, previousOrder.customer_id);
+    if (email) {
+      await sendOrderTrackingUpdateEmail({
+        to: email,
+        orderNumber: previousOrder.order_number,
+        trackingNumber: d.trackingNumber,
+        courierName: d.courierName,
+        businessName: admin.vendor_name,
+      });
+    }
+  }
 
   revalidatePath('/admin');
   revalidatePath('/admin/orders');
