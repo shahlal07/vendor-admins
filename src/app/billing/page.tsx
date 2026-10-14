@@ -47,7 +47,7 @@ export default async function VendorBillingPage({ searchParams }: { searchParams
           <h1 className="mt-2 text-3xl font-bold">Invoices & payments</h1>
           <p className="mt-2 text-sm text-[var(--text-light)]">{vendor.name} · {vendor.plan === "monthly" ? "Monthly plan" : "Per-order plan"}</p>
         </div>
-        <a href="/admin" className="rounded-xl border border-[var(--border-subtle)] px-4 py-2 text-sm font-semibold hover:bg-[var(--surface)]">Back to dashboard</a>
+        <a href={vendor.status === "active" ? "/admin" : "/billing"} className="rounded-xl border border-[var(--border-subtle)] px-4 py-2 text-sm font-semibold hover:bg-[var(--surface)]">{vendor.status === "active" ? "Back to dashboard" : "Billing home"}</a>
       </header>
 
       {vendor.status === "suspended" && (
