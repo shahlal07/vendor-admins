@@ -1,5 +1,4 @@
 import 'server-only';
-import nodemailer from 'nodemailer';
 import { formatPKR } from '@/lib/format';
 import { SITE_URL } from '@/lib/site-url';
 
@@ -10,16 +9,9 @@ import { SITE_URL } from '@/lib/site-url';
 // GMAIL_USER/GMAIL_APP_PASSWORD env vars. No-ops with a console warning
 // when unset so an admin action never fails just because email isn't
 // configured.
-const GMAIL_USER = process.env.GMAIL_USER;
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
-
-const transporter =
-  GMAIL_USER && GMAIL_APP_PASSWORD
-    ? nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
-      })
-    : null;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+const FROM_NOTIFICATIONS = 'Nashemann <notifications@nashemann.store>';
 
 // A crude but effective HTML->text derivation -- an HTML-only email (no
 // text/plain part) is one of the strongest signals spam filters use against
@@ -42,21 +34,31 @@ function htmlToText(html: string): string {
 
 // Best-effort: a failed send must never fail the admin action (status
 // update / payment verification) that already succeeded in the database.
-async function sendMail(to: string, subject: string, html: string, businessName: string): Promise<void> {
-  if (!transporter || !GMAIL_USER) {
-    console.warn(`[email] Skipped "${subject}" to ${to} -- GMAIL_USER/GMAIL_APP_PASSWORD not set.`);
+async function sendMail(to: string, subject: string, html: string, _businessName: string): Promise<void> {
+  if (!RESEND_API_KEY) {
+    console.error(`[email] Skipped "${subject}" to ${to} -- RESEND_API_KEY is not configured for this deployment.`);
     return;
   }
   try {
-    await transporter.sendMail({
-      from: `"${businessName}" <${GMAIL_USER}>`,
-      to,
-      subject,
-      text: htmlToText(html),
-      html,
+    const response = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_NOTIFICATIONS,
+        to,
+        subject,
+        html,
+        text: htmlToText(html),
+      }),
     });
-  } catch (err) {
-    console.error(`[email] Failed to send "${subject}" to ${to}:`, err);
+    if (!response.ok) {
+      console.error(`[email] Resend rejected "${subject}" to ${to}: ${response.status} ${await response.text().catch(() => '')}`);
+    }
+  } catch (error) {
+    console.error(`[email] Failed to send "${subject}" to ${to}:`, error);
   }
 }
 
@@ -84,6 +86,48 @@ const STATUS_COPY: Record<string, { emoji: string; message: string }> = {
   cancelled: { emoji: '❌', message: 'Your order has been cancelled.' },
   refunded: { emoji: '↩️', message: 'Your order has been refunded.' },
 };
+
+export async function sendOrderTrackingUpdateEmail(params: {
+  to: string;
+  orderNumber: string;
+  trackingNumber: string | null;
+  courierName: string | null;
+  businessName: string;
+}): Promise<void> {
+  const safe = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const details = [
+    params.courierName ? `<p><strong>Courier:</strong> ${safe(params.courierName)}</p>` : '',
+    params.trackingNumber ? `<p><strong>Tracking number:</strong> ${safe(params.trackingNumber)}</p>` : '',
+  ].join('');
+  const html = wrapEmail(`
+    <h2 style="margin-top:0;">Your order is on its way 📦</h2>
+    <p>Hello, the delivery details for order <strong>${safe(params.orderNumber)}</strong> have been updated by ${safe(params.businessName)}.</p>
+    ${details}
+    <p>If no tracking number is listed yet, the seller may add it shortly.</p>
+  `, params.businessName);
+  await sendMail(params.to, `Delivery details updated — ${params.orderNumber}`, html, params.businessName);
+}
+
+export async function sendPlatformPaymentSubmissionAlertEmail(params: {
+  to: string;
+  vendorName: string;
+  monthLabel: string;
+  amount: number;
+  method: string;
+  reference: string;
+}): Promise<void> {
+  const safe = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const html = wrapEmail(`
+    <h2 style="margin-top:0;">New vendor payment submission</h2>
+    <p><strong>${safe(params.vendorName)}</strong> submitted a payment for the ${safe(params.monthLabel)} settlement.</p>
+    <p><strong>Amount:</strong> Rs ${Math.round(params.amount).toLocaleString('en-PK')}<br/>
+    <strong>Method:</strong> ${safe(params.method)}<br/>
+    <strong>Reference:</strong> ${safe(params.reference)}</p>
+    <p>Please review the proof and submission in the Super Admin panel.</p>
+    <a href="https://superadmin.nashemann.store/settlements/submissions" style="display:inline-block;margin-top:12px;background:#FF6B00;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">Review payment</a>
+  `, 'Nashemann');
+  await sendMail(params.to, `Payment submitted — ${params.vendorName} — ${params.monthLabel}`, html, 'Nashemann');
+}
 
 export async function sendOrderStatusUpdateEmail(params: {
   to: string;
