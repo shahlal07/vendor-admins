@@ -53,6 +53,11 @@ export async function updateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
+  const { data: previousOrder } = await supabase
+    .from('orders')
+    .select('status')
+    .eq('id', parsed.data.orderId)
+    .maybeSingle();
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
@@ -67,7 +72,7 @@ export async function updateOrderStatus(
   });
 
   const email = await getCustomerEmail(supabase, updated.customer_id, (updated.delivery as { email?: string } | null)?.email);
-  if (email) {
+  if (email && previousOrder && previousOrder.status !== parsed.data.status) {
     await sendOrderStatusUpdateEmail({
       to: email,
       orderNumber: updated.order_number,
@@ -107,11 +112,16 @@ export async function bulkUpdateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
+  const { data: previousOrders } = await supabase
+    .from('orders')
+    .select('id, status')
+    .in('id', parsed.data.orderIds);
+  const previousStatusById = new Map((previousOrders ?? []).map((o) => [o.id, o.status]));
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
     .in('id', parsed.data.orderIds)
-    .select('order_number, customer_id, delivery');
+    .select('id, order_number, customer_id, delivery');
 
   if (error) return { error: `Failed to update orders: ${error.message}` };
 
@@ -132,6 +142,7 @@ export async function bulkUpdateOrderStatus(
 
   await Promise.all(
     (updated ?? []).map((o) => {
+      if (previousStatusById.get(o.id) === parsed.data.status) return Promise.resolve();
       const email = emailByCustomerId.get(o.customer_id) ?? (o.delivery as { email?: string } | null)?.email;
       if (!email) return Promise.resolve();
       return sendOrderStatusUpdateEmail({
