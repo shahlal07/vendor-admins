@@ -21,6 +21,10 @@ export default function LoginPage() {
 
         <Suspense fallback={null}>
           <LoginForm />
+          <div className="mt-5 border-t border-[var(--border-subtle)] pt-4 text-center">
+            <a href="/billing" className="text-sm font-semibold text-[var(--mango-orange)] hover:underline">Open billing and invoices</a>
+            <p className="mt-1 text-xs text-[var(--text-light)]">Use this page to view invoices and submit payment details, including when your store is suspended.</p>
+          </div>
         </Suspense>
       </div>
     </div>
