@@ -24,7 +24,7 @@ export default async function VendorInvoicePage({ params }: { params: Promise<{ 
 
   const { data: invoice, error } = await supabase
     .from("settlements")
-    .select("id, vendor_id, month, orders_count, gross_revenue, platform_fee, amount_paid, status, due_date, plan_snapshot, unit_fee")
+    .select("id, vendor_id, month, orders_count, gross_revenue, platform_fee, adjustment_total, amount_paid, status, due_date, plan_snapshot, unit_fee")
     .eq("id", id)
     .eq("vendor_id", profile.vendor_id)
     .maybeSingle();
@@ -36,7 +36,11 @@ export default async function VendorInvoicePage({ params }: { params: Promise<{ 
   const unitFee = invoice.unit_fee == null
     ? (plan === "monthly" ? Number(invoice.platform_fee) : Number(invoice.orders_count) > 0 ? Number(invoice.platform_fee) / Number(invoice.orders_count) : 0)
     : Number(invoice.unit_fee);
-  const balance = Math.max(0, Number(invoice.platform_fee) - Number(invoice.amount_paid ?? 0));
+  const baseFee = Number(invoice.platform_fee);
+  const adjustmentTotal = Number(invoice.adjustment_total ?? 0);
+  const totalDue = baseFee + adjustmentTotal;
+  const balance = Math.max(0, totalDue - Number(invoice.amount_paid ?? 0));
+  const vendorCredit = Math.max(0, Number(invoice.amount_paid ?? 0) - totalDue);
 
   return (
     <main className="mx-auto max-w-3xl space-y-5 p-5 text-slate-900">
@@ -53,9 +57,9 @@ export default async function VendorInvoicePage({ params }: { params: Promise<{ 
           <div><p className="text-xs font-bold uppercase text-slate-500">Bill to</p><p className="mt-2 text-lg font-semibold">{vendor?.name ?? "Your store"}</p></div>
           <div className="sm:text-right"><p className="text-xs font-bold uppercase text-slate-500">Due date</p><p className="mt-2 text-lg font-semibold">{invoice.due_date ?? "Not set"}</p><p className="text-sm text-slate-500">Plan: {plan === "monthly" ? "Monthly" : "Per order"}</p></div>
         </div>
-        <table className="w-full border-collapse text-sm"><thead><tr className="border-y border-slate-200 text-left text-xs uppercase text-slate-500"><th className="py-3">Description</th><th className="py-3 text-right">Qty</th><th className="py-3 text-right">Unit fee</th><th className="py-3 text-right">Amount</th></tr></thead><tbody><tr className="border-b border-slate-100"><td className="py-4 font-semibold">{plan === "monthly" ? "Monthly platform subscription" : "Per-order platform plan fee"}</td><td className="py-4 text-right">{quantity}</td><td className="py-4 text-right">{formatPKR(unitFee)}</td><td className="py-4 text-right font-semibold">{formatPKR(Number(invoice.platform_fee))}</td></tr></tbody></table>
+        <table className="w-full border-collapse text-sm"><thead><tr className="border-y border-slate-200 text-left text-xs uppercase text-slate-500"><th className="py-3">Description</th><th className="py-3 text-right">Qty</th><th className="py-3 text-right">Unit fee</th><th className="py-3 text-right">Amount</th></tr></thead><tbody><tr className="border-b border-slate-100"><td className="py-4 font-semibold">{plan === "monthly" ? "Monthly platform subscription" : "Per-order platform plan fee"}</td><td className="py-4 text-right">{quantity}</td><td className="py-4 text-right">{formatPKR(unitFee)}</td><td className="py-4 text-right font-semibold">{formatPKR(baseFee)}</td></tr>{adjustmentTotal !== 0 && <tr className="border-b border-slate-100"><td className="py-4">Refund/cancellation credits and adjustments</td><td className="py-4 text-right">—</td><td className="py-4 text-right">—</td><td className="py-4 text-right">{formatPKR(adjustmentTotal)}</td></tr>}</tbody></table>
         <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Eligible orders: {invoice.orders_count} · Gross sales (informational): {formatPKR(Number(invoice.gross_revenue))}</p>
-        <div className="ml-auto mt-6 max-w-sm space-y-3"><div className="flex justify-between text-sm text-slate-600"><span>Invoice total</span><span>{formatPKR(Number(invoice.platform_fee))}</span></div><div className="flex justify-between text-sm text-slate-600"><span>Payments confirmed</span><span>{formatPKR(Number(invoice.amount_paid ?? 0))}</span></div><div className="flex justify-between border-t border-slate-200 pt-3 text-lg font-bold"><span>Balance due</span><span>{formatPKR(balance)}</span></div></div>
+        <div className="ml-auto mt-6 max-w-sm space-y-3"><div className="flex justify-between text-sm text-slate-600"><span>Invoice total</span><span>{formatPKR(totalDue)}</span></div><div className="flex justify-between text-sm text-slate-600"><span>Payments confirmed</span><span>{formatPKR(Number(invoice.amount_paid ?? 0))}</span></div><div className="flex justify-between border-t border-slate-200 pt-3 text-lg font-bold"><span>Balance due</span><span>{formatPKR(balance)}</span></div>{vendorCredit > 0 && <div className="flex justify-between text-sm font-semibold text-emerald-700"><span>Credit on account</span><span>{formatPKR(vendorCredit)}</span></div>}</div>
         <p className="mt-8 border-t border-slate-200 pt-4 text-xs leading-5 text-slate-500">Payment submissions are not confirmations. Your balance changes only after Nashemann Superadmin verifies the payment. Please include this invoice reference with any payment query.</p>
       </article>
     </main>
