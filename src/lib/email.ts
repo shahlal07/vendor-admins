@@ -32,7 +32,7 @@ function htmlToText(html: string): string {
 
 // Best-effort: a failed send must never fail the admin action (status
 // update / payment verification) that already succeeded in the database.
-async function sendMail(to: string, subject: string, html: string, _businessName: string): Promise<void> {
+async function sendMail(to: string, subject: string, html: string, _businessName: string, category: 'notifications' | 'marketing' | 'support' | 'security' | 'staff' = 'notifications'): Promise<void> {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRoleKey) {
     console.error(`[email] Skipped "${subject}" to ${to} -- SUPABASE_SERVICE_ROLE_KEY is not configured.`);
@@ -45,7 +45,7 @@ async function sendMail(to: string, subject: string, html: string, _businessName
         Authorization: `Bearer ${serviceRoleKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ to, subject, html, category: 'notifications' }),
+      body: JSON.stringify({ to, subject, html, category, source: 'vendor-admins' }),
     });
     if (!response.ok) {
       console.error(`[email] Internal mailer rejected "${subject}" to ${to}: HTTP ${response.status}`);
@@ -113,7 +113,7 @@ export async function sendVendorSupportMessageAlertEmail(params: {
     <blockquote style="margin:16px 0;padding:12px 16px;border-left:3px solid #FF6B00;background:#f9fafb;white-space:pre-wrap;">${safe(params.message)}</blockquote>
     <a href="https://superadmin.nashemann.store/support" style="display:inline-block;margin-top:12px;background:#FF6B00;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">Open support inbox</a>
   `, 'Nashemann');
-  await sendMail(params.to, `New support message — ${params.vendorName}`, html, 'Nashemann');
+  await sendMail(params.to, `New support message — ${params.vendorName}`, html, 'Nashemann', 'support');
 }
 
 export async function sendPlatformPaymentSubmissionAlertEmail(params: {
@@ -174,7 +174,7 @@ export async function sendAnnouncementEmail(params: {
     <p style="white-space:pre-wrap;">${params.message}</p>
     <a href="${SITE_URL}" style="display:inline-block;margin-top:16px;background:#FF6B00;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">Shop Now</a>
   `, params.businessName);
-  await sendMail(params.to, params.title, html, params.businessName);
+  await sendMail(params.to, params.title, html, params.businessName, 'marketing');
 }
 
 export async function sendPaymentStatusUpdateEmail(params: {
