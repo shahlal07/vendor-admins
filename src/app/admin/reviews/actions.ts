@@ -35,7 +35,7 @@ export async function generateAIReply(
   const admin = await getAdminUser();
 
   const supabase = await createClient();
-  const { allowed } = await checkRateLimit(supabase, 'admin_groq', admin.id, {
+  const { allowed } = await checkRateLimit('admin_groq', admin.id, {
     maxAttempts: 30,
     windowMinutes: 10,
     lockMinutes: 10,
