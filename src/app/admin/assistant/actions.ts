@@ -5,7 +5,6 @@ import { getAdminUser } from '@/lib/dal';
 import { groqComplete, type ChatMessage } from '@/lib/groq';
 import { getAssistantContext } from '@/lib/queries/assistant-context';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { createClient } from '@/lib/supabase/server';
 
 export type AssistantState = { error?: string; reply?: string } | undefined;
 
@@ -27,8 +26,7 @@ export async function askAssistant(
 ): Promise<AssistantState> {
   const admin = await getAdminUser();
 
-  const supabase = await createClient();
-  const { allowed } = await checkRateLimit(supabase, 'admin_groq', admin.id, {
+  const { allowed } = await checkRateLimit('admin_groq', admin.id, {
     maxAttempts: 30,
     windowMinutes: 10,
     lockMinutes: 10,

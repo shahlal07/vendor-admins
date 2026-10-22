@@ -1,4 +1,5 @@
-import type { createClient } from '@/lib/supabase/server';
+import 'server-only';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 type RateLimitOptions = {
   maxAttempts: number;
@@ -8,28 +9,28 @@ type RateLimitOptions = {
 
 type RateLimitResult = { allowed: boolean; retryAfter: string | null };
 
-// Generic wrapper around the check_and_record_rate_limit RPC (mirrors
-// vendor-storefronts/src/lib/rate-limit.ts) -- parameterized version of the same
-// row-lock/increment/lockout primitive check_and_record_login_attempt
-// already uses. Fails closed on any RPC error.
+// The underlying SECURITY DEFINER RPC mutates a private rate-limit table.
+// Keep this helper server-only and use the service-role client so anon and
+// authenticated API clients cannot directly seed/lock arbitrary bucket keys.
 export async function checkRateLimit(
-  supabase: Awaited<ReturnType<typeof createClient>>,
   bucket: string,
   identifier: string,
   { maxAttempts, windowMinutes, lockMinutes }: RateLimitOptions
 ): Promise<RateLimitResult> {
-  // Matches the un-.single()'d indexing pattern check_and_record_login_attempt's
-  // own call site (login/actions.ts) already uses -- this repo's Supabase
-  // client has no generated Database type, so .single() resolves to an
-  // unhelpfully-narrow {} here rather than the real row shape.
-  const { data } = await supabase.rpc('check_and_record_rate_limit', {
+  const supabase = createAdminClient();
+  const result = await supabase.rpc('check_and_record_rate_limit', {
     p_bucket: bucket,
     p_identifier: identifier,
     p_max_attempts: maxAttempts,
     p_window_minutes: windowMinutes,
     p_lock_minutes: lockMinutes,
   });
+  const data = result.data as { allowed: boolean; retry_after: string | null }[] | null;
   const row = data?.[0];
+  const error = result.error;
 
-  return { allowed: row?.allowed === true, retryAfter: row?.retry_after ?? null };
+  return {
+    allowed: !error && row?.allowed === true,
+    retryAfter: row?.retry_after ?? null,
+  };
 }
