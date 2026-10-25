@@ -257,6 +257,7 @@ export async function updateOrderTracking(
       courierName: d.courierName,
       trackingNumber: d.trackingNumber,
       vendorName: admin.vendor_name,
+      eventType: "tracking_update",
     });
   }
 
