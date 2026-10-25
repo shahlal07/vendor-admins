@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAdminUser } from '@/lib/dal';
 import { logAdminAction } from '@/lib/audit-log';
 import { ORDER_STATUSES } from '@/lib/order-status';
+import { sendWhatsAppOrderUpdate } from '@/lib/whatsapp';
 import {
   sendOrderStatusUpdateEmail,
   sendPaymentApprovedEmail,
@@ -78,6 +79,15 @@ export async function updateOrderStatus(
       orderNumber: updated.order_number,
       status: parsed.data.status,
       businessName: admin.vendor_name,
+    });
+  }
+  if (previousOrder && previousOrder.status !== parsed.data.status) {
+    const delivery = updated.delivery as { phone?: string } | null;
+    await sendWhatsAppOrderUpdate({
+      phone: delivery?.phone,
+      orderNumber: updated.order_number,
+      status: parsed.data.status,
+      vendorName: admin.vendor_name,
     });
   }
 
@@ -227,6 +237,15 @@ export async function updateOrderTracking(
         businessName: admin.vendor_name,
       });
     }
+    const delivery = previousOrder.delivery as { phone?: string } | null;
+    await sendWhatsAppOrderUpdate({
+      phone: delivery?.phone,
+      orderNumber: previousOrder.order_number,
+      status: "Tracking updated",
+      courierName: d.courierName,
+      trackingNumber: d.trackingNumber,
+      vendorName: admin.vendor_name,
+    });
   }
 
   if (previousOrder && previousOrder.payment_status !== d.paymentStatus &&
