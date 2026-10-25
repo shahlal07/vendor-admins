@@ -151,16 +151,28 @@ export async function bulkUpdateOrderStatus(
   const emailByCustomerId = new Map((profiles ?? []).map((p) => [p.id, p.email]));
 
   await Promise.all(
-    (updated ?? []).map((o) => {
-      if (previousStatusById.get(o.id) === parsed.data.status) return Promise.resolve();
-      const email = emailByCustomerId.get(o.customer_id) ?? (o.delivery as { email?: string } | null)?.email;
-      if (!email) return Promise.resolve();
-      return sendOrderStatusUpdateEmail({
-        to: email,
-        orderNumber: o.order_number,
-        status: parsed.data.status,
-        businessName: admin.vendor_name,
-      });
+    (updated ?? []).map(async (o) => {
+      if (previousStatusById.get(o.id) === parsed.data.status) return;
+      const delivery = o.delivery as { email?: string; phone?: string } | null;
+      const email = emailByCustomerId.get(o.customer_id) ?? delivery?.email;
+      const notifications: Promise<unknown>[] = [];
+      if (email) {
+        notifications.push(sendOrderStatusUpdateEmail({
+          to: email,
+          orderNumber: o.order_number,
+          status: parsed.data.status,
+          businessName: admin.vendor_name,
+        }));
+      }
+      if (delivery?.phone) {
+        notifications.push(sendWhatsAppOrderUpdate({
+          phone: delivery.phone,
+          orderNumber: o.order_number,
+          status: parsed.data.status,
+          vendorName: admin.vendor_name,
+        }));
+      }
+      await Promise.all(notifications);
     })
   );
 
