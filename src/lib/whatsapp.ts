@@ -1,10 +1,13 @@
+import "server-only";
+import { createHash } from "node:crypto";
+import { createAdminClient } from "@/lib/supabase/admin";
+
 /**
- * Optional WhatsApp Cloud API adapter for order notifications.
+ * Optional WhatsApp Cloud API adapter backed by the shared notification outbox.
  * Configure WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN,
  * WHATSAPP_ORDER_TEMPLATE_NAME and optionally WHATSAPP_TEMPLATE_LANGUAGE.
  * The approved template must have five BODY parameters: order number, status,
  * courier, tracking number, vendor/store name.
- * Best-effort only: messaging failures never roll back a successful order.
  */
 export type WhatsAppOrderUpdate = {
   phone: string | null | undefined;
@@ -13,6 +16,7 @@ export type WhatsAppOrderUpdate = {
   courierName?: string | null;
   trackingNumber?: string | null;
   vendorName?: string | null;
+  eventType?: "order_received" | "order_status" | "tracking_update";
 };
 
 function normalizeWhatsAppPhone(value: string): string | null {
@@ -24,6 +28,10 @@ function normalizeWhatsAppPhone(value: string): string | null {
   return /^\d{8,15}$/.test(phone) ? phone : null;
 }
 
+function retryAt(attempt: number): string {
+  return new Date(Date.now() + Math.min(60 * 60 * 1000, 30_000 * 2 ** Math.min(attempt, 7))).toISOString();
+}
+
 export async function sendWhatsAppOrderUpdate(update: WhatsAppOrderUpdate): Promise<void> {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -32,13 +40,55 @@ export async function sendWhatsAppOrderUpdate(update: WhatsAppOrderUpdate): Prom
     console.info("[whatsapp] Not configured; order notification skipped.");
     return;
   }
-  if (!update.phone) {
-    console.info(`[whatsapp] No customer phone for order ${update.orderNumber}; skipped.`);
-    return;
-  }
+  if (!update.phone) return;
   const to = normalizeWhatsAppPhone(update.phone);
   if (!to) {
     console.warn(`[whatsapp] Invalid customer phone for order ${update.orderNumber}; skipped.`);
+    return;
+  }
+
+  const language = process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en";
+  const eventType = update.eventType || "order_status";
+  const payload = {
+    orderNumber: update.orderNumber,
+    status: update.status,
+    courierName: update.courierName || "Not assigned",
+    trackingNumber: update.trackingNumber || "Not available",
+    vendorName: update.vendorName || "Nashemann",
+  };
+  const idempotencyKey = createHash("sha256")
+    .update(JSON.stringify({ eventType, to, templateName, language, payload }))
+    .digest("hex");
+
+  let supabase;
+  let outboxId: string;
+  try {
+    supabase = createAdminClient();
+    const { data: inserted, error: insertError } = await supabase
+      .from("whatsapp_notification_outbox")
+      .insert({
+        idempotency_key: idempotencyKey,
+        order_number: update.orderNumber,
+        event_type: eventType,
+        recipient_phone: to,
+        template_name: templateName,
+        template_language: language,
+        payload,
+        state: "sending",
+        attempts: 1,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (insertError?.code === "23505") return;
+    if (insertError || !inserted?.id) {
+      console.error("[whatsapp] Could not create outbox record:", insertError?.message);
+      return;
+    }
+    outboxId = inserted.id;
+  } catch (error) {
+    console.error("[whatsapp] Outbox unavailable; notification not sent:", error);
     return;
   }
 
@@ -53,25 +103,64 @@ export async function sendWhatsAppOrderUpdate(update: WhatsAppOrderUpdate): Prom
         type: "template",
         template: {
           name: templateName,
-          language: { code: process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en" },
-          components: [{
-            type: "body",
-            parameters: [
-              { type: "text", text: update.orderNumber },
-              { type: "text", text: update.status },
-              { type: "text", text: update.courierName || "Not assigned" },
-              { type: "text", text: update.trackingNumber || "Not available" },
-              { type: "text", text: update.vendorName || "Nashemann" },
-            ],
-          }],
+          language: { code: language },
+          components: [{ type: "body", parameters: [
+            { type: "text", text: payload.orderNumber },
+            { type: "text", text: payload.status },
+            { type: "text", text: payload.courierName },
+            { type: "text", text: payload.trackingNumber },
+            { type: "text", text: payload.vendorName },
+          ] }],
         },
       }),
       cache: "no-store",
     });
-    if (!response.ok) {
-      console.error(`[whatsapp] Provider rejected order ${update.orderNumber} (${response.status}): ${(await response.text()).slice(0, 1000)}`);
+    const responseText = await response.text();
+    let providerMessageId: string | null = null;
+    let providerError = responseText.slice(0, 1000);
+    if (response.ok) {
+      try {
+        const body = JSON.parse(responseText) as { messages?: Array<{ id?: string }> };
+        providerMessageId = body.messages?.[0]?.id ?? null;
+      } catch {
+        providerError = "Meta returned an unreadable success response";
+      }
+      if (!providerMessageId) providerError = "Meta accepted the request but returned no message ID";
     }
+
+    if (response.ok && providerMessageId) {
+      const { error } = await supabase.from("whatsapp_notification_outbox").update({
+        state: "accepted",
+        provider_message_id: providerMessageId,
+        provider_status: "accepted",
+        accepted_at: new Date().toISOString(),
+        last_error: null,
+        next_attempt_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", outboxId);
+      if (error) console.error("[whatsapp] Could not persist provider acceptance:", error.message);
+      return;
+    }
+
+    const { error } = await supabase.from("whatsapp_notification_outbox").update({
+      state: "failed",
+      provider_status: "failed",
+      last_error: `HTTP ${response.status}: ${providerError}`.slice(0, 1000),
+      next_attempt_at: retryAt(1),
+      updated_at: new Date().toISOString(),
+    }).eq("id", outboxId);
+    if (error) console.error("[whatsapp] Could not persist provider failure:", error.message);
+    console.error(`[whatsapp] Provider rejected order ${update.orderNumber} (HTTP ${response.status}).`);
   } catch (error) {
-    console.error(`[whatsapp] Network error for order ${update.orderNumber}:`, error);
+    const message = error instanceof Error ? error.message : "Unknown network error";
+    const { error: updateError } = await supabase.from("whatsapp_notification_outbox").update({
+      state: "failed",
+      provider_status: "network_error",
+      last_error: message.slice(0, 1000),
+      next_attempt_at: retryAt(1),
+      updated_at: new Date().toISOString(),
+    }).eq("id", outboxId);
+    if (updateError) console.error("[whatsapp] Could not persist network failure:", updateError.message);
+    console.error(`[whatsapp] Network error for order ${update.orderNumber}:`, message);
   }
 }
