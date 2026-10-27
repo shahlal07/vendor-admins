@@ -32,12 +32,14 @@ export function OrdersListClient({
   page,
   pageSize,
   totalCount,
+  source,
 }: {
   orders: OrderListItem[];
   statusFilter: string;
   page: number;
   pageSize: number;
   totalCount: number;
+  source: 'real' | 'demo';
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -55,6 +57,11 @@ export function OrdersListClient({
   }
 
   useEffect(() => {
+    if (source === 'demo') {
+      // Never carry a real-order selection across into the demo view.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelected(new Set());
+    }
     if (state?.success) {
       toast.success('Orders updated');
       // Clearing the selection after a successful bulk update has no
@@ -64,7 +71,7 @@ export function OrdersListClient({
       setSelected(new Set());
     }
     if (state?.error) toast.error(state.error);
-  }, [state]);
+  }, [state, source]);
 
   function toggleAll() {
     setSelected((s) => (s.size === orders.length ? new Set() : new Set(orders.map((o) => o.id))));
@@ -103,7 +110,7 @@ export function OrdersListClient({
           ))}
         </select>
 
-        {selected.size > 0 && (
+        {source === 'real' && selected.size > 0 && (
           <form
             action={(fd) => {
               fd.set('orderIdsJson', JSON.stringify([...selected]));
@@ -137,22 +144,24 @@ export function OrdersListClient({
 
       {orders.length === 0 ? (
         <p className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-5 text-sm text-[var(--text-light)] shadow-sm">
-          No orders yet — real customer orders will show up here once the storefront checkout
-          starts writing to this schema.
+          {source === 'demo'
+            ? 'No demo orders match this filter for your vendor.'
+            : 'No orders yet — real customer orders will show up here once the storefront checkout starts writing to this schema.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] shadow-sm">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[var(--border-subtle)] text-xs uppercase tracking-wide text-[var(--text-light)]">
-                <th className="py-3 pl-5 pr-2">
+                {source === 'real' && <th className="py-3 pl-5 pr-2">
                   <input
                     type="checkbox"
-                    checked={selected.size === orders.length}
+                    checked={orders.length > 0 && selected.size === orders.length}
                     onChange={toggleAll}
+                    aria-label="Select all orders"
                     className="h-4 w-4 accent-[var(--mango-orange)]"
                   />
-                </th>
+                </th>}
                 <th className="py-3 pr-4">Order #</th>
                 <th className="py-3 pr-4">Customer</th>
                 <th className="py-3 pr-4">Total</th>
@@ -165,14 +174,15 @@ export function OrdersListClient({
             <tbody>
               {orders.map((o) => (
                 <tr key={o.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
-                  <td className="py-3 pl-5 pr-2">
+                  {source === 'real' && <td className="py-3 pl-5 pr-2">
                     <input
                       type="checkbox"
                       checked={selected.has(o.id)}
                       onChange={() => toggleOne(o.id)}
+                      aria-label={`Select order ${o.order_number}`}
                       className="h-4 w-4 accent-[var(--mango-orange)]"
                     />
-                  </td>
+                  </td>}
                   <td className="py-3 pr-4 font-medium text-[var(--text)]">{o.order_number}</td>
                   <td className="py-3 pr-4 text-[var(--text-light)]">{o.customer_name}</td>
                   <td className="py-3 pr-4 text-[var(--text)]">{formatPKR(o.total)}</td>
@@ -192,12 +202,16 @@ export function OrdersListClient({
                     {new Date(o.created_at).toLocaleDateString('en-PK')}
                   </td>
                   <td className="py-3 pr-5">
-                    <Link
-                      href={`/admin/orders/${o.id}`}
-                      className="rounded-lg bg-[var(--mango-orange)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--mango-deep)]"
-                    >
-                      View
-                    </Link>
+                    {source === 'real' ? (
+                      <Link
+                        href={`/admin/orders/${o.id}`}
+                        className="rounded-lg bg-[var(--mango-orange)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--mango-deep)]"
+                      >
+                        View
+                      </Link>
+                    ) : (
+                      <span className="rounded-full border border-amber-500 px-2 py-1 text-xs font-semibold text-amber-800">Demo only</span>
+                    )}
                   </td>
                 </tr>
               ))}
