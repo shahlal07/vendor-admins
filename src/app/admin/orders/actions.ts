@@ -338,6 +338,7 @@ export async function verifyPayment(
     .eq('id', d.orderId)
     .eq('vendor_id', admin.vendor_id)
     .eq('payment_status', order.payment_status)
+    .eq('status', order.status)
     .select('id')
     .maybeSingle();
 
