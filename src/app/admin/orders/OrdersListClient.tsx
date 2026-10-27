@@ -57,6 +57,11 @@ export function OrdersListClient({
   }
 
   useEffect(() => {
+    if (source === 'demo') {
+      // Never carry a real-order selection across into the demo view.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelected(new Set());
+    }
     if (state?.success) {
       toast.success('Orders updated');
       // Clearing the selection after a successful bulk update has no
@@ -66,7 +71,7 @@ export function OrdersListClient({
       setSelected(new Set());
     }
     if (state?.error) toast.error(state.error);
-  }, [state]);
+  }, [state, source]);
 
   function toggleAll() {
     setSelected((s) => (s.size === orders.length ? new Set() : new Set(orders.map((o) => o.id))));
@@ -139,8 +144,9 @@ export function OrdersListClient({
 
       {orders.length === 0 ? (
         <p className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-5 text-sm text-[var(--text-light)] shadow-sm">
-          No orders yet — real customer orders will show up here once the storefront checkout
-          starts writing to this schema.
+          {source === 'demo'
+            ? 'No demo orders match this filter for your vendor.'
+            : 'No orders yet — real customer orders will show up here once the storefront checkout starts writing to this schema.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] shadow-sm">
