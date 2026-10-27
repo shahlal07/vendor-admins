@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAdminUser } from '@/lib/dal';
 import { logAdminAction } from '@/lib/audit-log';
 import { ORDER_STATUSES } from '@/lib/order-status';
+import { canTransitionOrderStatus } from '@/lib/order-transition';
 import { sendWhatsAppOrderUpdate } from '@/lib/whatsapp';
 import {
   sendOrderStatusUpdateEmail,
@@ -54,19 +55,27 @@ export async function updateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
-  const { data: previousOrder } = await supabase
+  const { data: previousOrder, error: readError } = await supabase
     .from('orders')
     .select('status')
     .eq('id', parsed.data.orderId)
+    .eq('vendor_id', admin.vendor_id)
     .maybeSingle();
+  if (readError || !previousOrder) return { error: 'Order not found for this store.' };
+  if (!canTransitionOrderStatus(previousOrder.status, parsed.data.status)) {
+    return { error: `Order cannot move from ${previousOrder.status} to ${parsed.data.status}.` };
+  }
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
     .eq('id', parsed.data.orderId)
+    .eq('vendor_id', admin.vendor_id)
+    .eq('status', previousOrder.status)
     .select('order_number, customer_id, delivery')
-    .single();
+    .maybeSingle();
 
   if (error) return { error: `Failed to update status: ${error.message}` };
+  if (!updated) return { error: 'Order status changed or order not found. Refresh and retry.' };
 
   await logAdminAction(admin, 'update_status', 'order', parsed.data.orderId, {
     status: parsed.data.status,
@@ -122,18 +131,30 @@ export async function bulkUpdateOrderStatus(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
 
   const supabase = await createClient();
-  const { data: previousOrders } = await supabase
+  const { data: previousOrders, error: readError } = await supabase
     .from('orders')
     .select('id, status')
+    .eq('vendor_id', admin.vendor_id)
     .in('id', parsed.data.orderIds);
-  const previousStatusById = new Map((previousOrders ?? []).map((o) => [o.id, o.status]));
+  if (readError || !previousOrders || previousOrders.length !== parsed.data.orderIds.length) {
+    return { error: 'One or more selected orders were not found for this store.' };
+  }
+  const invalidTransition = previousOrders.find((order) => !canTransitionOrderStatus(order.status, parsed.data.status));
+  if (invalidTransition) {
+    return { error: `Order ${invalidTransition.id} cannot move from ${invalidTransition.status} to ${parsed.data.status}. No orders were changed.` };
+  }
+  const previousStatusById = new Map(previousOrders.map((o) => [o.id, o.status]));
   const { data: updated, error } = await supabase
     .from('orders')
     .update({ status: parsed.data.status, updated_at: new Date().toISOString() })
+    .eq('vendor_id', admin.vendor_id)
     .in('id', parsed.data.orderIds)
     .select('id, order_number, customer_id, delivery');
 
   if (error) return { error: `Failed to update orders: ${error.message}` };
+  if (!updated || updated.length !== parsed.data.orderIds.length) {
+    return { error: 'Not every selected order was updated. Refresh the list and verify each order.' };
+  }
 
   await logAdminAction(admin, 'bulk_update_status', 'order', null, {
     orderIds: parsed.data.orderIds,
@@ -318,12 +339,13 @@ export async function verifyPayment(
 
   const { data: order, error: readError } = await supabase
     .from('orders')
-    .select('status, order_number, total, customer_id, delivery')
+    .select('status, order_number, total, customer_id, delivery, payment_status')
     .eq('id', d.orderId)
+    .eq('vendor_id', admin.vendor_id)
     .maybeSingle();
   if (readError || !order) return { error: 'Order not found.' };
 
-  const { error } = await supabase
+  const { data: paymentUpdated, error } = await supabase
     .from('orders')
     .update({
       payment_status: d.approve ? 'paid' : 'rejected',
@@ -335,9 +357,15 @@ export async function verifyPayment(
       ...(d.approve && order.status === 'pending' ? { status: 'confirmed' } : {}),
       updated_at: new Date().toISOString(),
     })
-    .eq('id', d.orderId);
+    .eq('id', d.orderId)
+    .eq('vendor_id', admin.vendor_id)
+    .eq('payment_status', order.payment_status)
+    .eq('status', order.status)
+    .select('id')
+    .maybeSingle();
 
   if (error) return { error: `Failed to save: ${error.message}` };
+  if (!paymentUpdated) return { error: 'Payment status changed while you were reviewing it. Refresh the order and verify again.' };
 
   await logAdminAction(
     admin,
