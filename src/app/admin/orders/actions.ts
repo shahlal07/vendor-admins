@@ -323,7 +323,7 @@ export async function verifyPayment(
     .maybeSingle();
   if (readError || !order) return { error: 'Order not found.' };
 
-  const { error } = await supabase
+  const { data: paymentUpdated, error } = await supabase
     .from('orders')
     .update({
       payment_status: d.approve ? 'paid' : 'rejected',
@@ -337,9 +337,12 @@ export async function verifyPayment(
     })
     .eq('id', d.orderId)
     .eq('vendor_id', admin.vendor_id)
-    .eq('payment_status', order.payment_status);
+    .eq('payment_status', order.payment_status)
+    .select('id')
+    .maybeSingle();
 
   if (error) return { error: `Failed to save: ${error.message}` };
+  if (!paymentUpdated) return { error: 'Payment status changed while you were reviewing it. Refresh the order and verify again.' };
 
   await logAdminAction(
     admin,
