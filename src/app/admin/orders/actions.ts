@@ -339,8 +339,9 @@ export async function verifyPayment(
 
   const { data: order, error: readError } = await supabase
     .from('orders')
-    .select('status, order_number, total, customer_id, delivery')
+    .select('status, order_number, total, customer_id, delivery, payment_status')
     .eq('id', d.orderId)
+    .eq('vendor_id', admin.vendor_id)
     .maybeSingle();
   if (readError || !order) return { error: 'Order not found.' };
 
