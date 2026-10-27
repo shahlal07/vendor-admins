@@ -335,7 +335,9 @@ export async function verifyPayment(
       ...(d.approve && order.status === 'pending' ? { status: 'confirmed' } : {}),
       updated_at: new Date().toISOString(),
     })
-    .eq('id', d.orderId);
+    .eq('id', d.orderId)
+    .eq('vendor_id', admin.vendor_id)
+    .eq('payment_status', order.payment_status);
 
   if (error) return { error: `Failed to save: ${error.message}` };
 
